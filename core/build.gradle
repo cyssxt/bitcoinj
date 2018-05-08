@@ -1,11 +1,13 @@
 apply plugin: 'java'
 apply plugin: 'com.google.protobuf'
 apply plugin: 'maven'
+apply plugin: 'maven-publish'
 
-version = '0.15-SNAPSHOT'
+version = '0.15-RELEASE'
 archivesBaseName = 'bitcoinj-core'
 
 dependencies {
+    compile group: 'org.postgresql', name: 'postgresql', version: '42.2.2'
     compile 'com.madgag.spongycastle:core:1.58.0.0'
     implementation 'com.lambdaworks:scrypt:1.4.0'
     implementation 'com.google.guava:guava:24.0-android'
@@ -22,6 +24,23 @@ dependencies {
     testImplementation 'org.fusesource.leveldbjni:leveldbjni-all:1.8'
 }
 
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            groupId 'org.bitcoinj'
+            artifactId 'bitcoinj-core'
+            version '0.15-RELEASE'
+
+            from components.java
+            // more goes in here
+        }
+    }
+
+    repositories {
+        mavenLocal()
+    }
+}
 sourceCompatibility = 1.7
 
 protobuf {
@@ -46,3 +65,10 @@ artifacts {
     archives sourcesJar
     archives javadocJar
 }
+
+
+
+javadoc {
+    options.encoding = 'UTF-8'
+}
+[compileJava, compileTestJava]*.options*.encoding = 'UTF-8'

@@ -77,15 +77,54 @@ public class PostgresFullPrunedBlockStore extends DatabaseFullPrunedBlockStore {
             "    toaddress character varying(35),\n" +
             "    addresstargetable smallint,\n" +
             "    coinbase boolean,\n" +
+            "    txid varchar(255),\n"+
+            "    fee bigint not null,\n"+
+            "    create_time timestamp DEFAULT now(),\n"+
+            "    timereceived bigint,\n"+
             "    CONSTRAINT openoutputs_pk PRIMARY KEY (hash,index)\n" +
             ")\n";
 
+    private static final String CREATE_TRANSACTIONS_INPIUT = "CREATE TABLE transactions_input (\n" +
+            "    hash bytea NOT NULL,\n" +
+            "    index integer NOT NULL,\n" +
+            "    height integer NOT NULL,\n" +
+            "    value bigint NOT NULL,\n" +
+            "    scriptbytes bytea NOT NULL,\n" +
+            "    toaddress character varying(35),\n" +
+            "    addresstargetable smallint,\n" +
+            "    coinbase boolean,\n" +
+            "    txid varchar(255),\n"+
+            "    fee bigint not null,\n"+
+            "    create_time timestamp DEFAULT now(),\n"+
+            "    timereceived bigint,\n"+
+            "    outputTxid varchar(255),\n"+
+            "    CONSTRAINT transactions_input_pk PRIMARY KEY (hash,index)\n" +
+            ")\n";
+
+    private static final String CREATE_TRANSACTIONS_OUTPUT = "CREATE TABLE transactions_output (\n" +
+            "    hash bytea NOT NULL,\n" +
+            "    index integer NOT NULL,\n" +
+            "    height integer NOT NULL,\n" +
+            "    value bigint NOT NULL,\n" +
+            "    scriptbytes bytea NOT NULL,\n" +
+            "    toaddress character varying(35),\n" +
+            "    addresstargetable smallint,\n" +
+            "    coinbase boolean,\n" +
+            "    txid varchar(255),\n"+
+            "    fee bigint not null,\n"+
+            "    create_time timestamp DEFAULT now(),\n"+
+            "    timereceived bigint,\n"+
+            "    CONSTRAINT transactions_output_pk PRIMARY KEY (hash,index)\n" +
+            ")\n";
     // Some indexes to speed up inserts
     private static final String CREATE_OUTPUTS_ADDRESS_MULTI_INDEX      = "CREATE INDEX openoutputs_hash_index_num_height_toaddress_idx ON openoutputs USING btree (hash, index, height, toaddress)";
     private static final String CREATE_OUTPUTS_TOADDRESS_INDEX          = "CREATE INDEX openoutputs_toaddress_idx ON openoutputs USING btree (toaddress)";
     private static final String CREATE_OUTPUTS_ADDRESSTARGETABLE_INDEX  = "CREATE INDEX openoutputs_addresstargetable_idx ON openoutputs USING btree (addresstargetable)";
     private static final String CREATE_OUTPUTS_HASH_INDEX               = "CREATE INDEX openoutputs_hash_idx ON openoutputs USING btree (hash)";
     private static final String CREATE_UNDOABLE_TABLE_INDEX             = "CREATE INDEX undoableblocks_height_idx ON undoableBlocks USING btree (height)";
+    private static final String CREATE_TRANSACTIONS_INPUT_TABLE_INDEX   = "CREATE INDEX transactions_input_hash_index_num_height_toaddress_idx ON transactions_input USING btree (hash, index, height, toaddress, txid, create_time, outputTxid)";
+    private static final String CREATE_TRANSACTIONS_OUPUT_TABLE_INDEX   = "CREATE INDEX transactions_output_hash_index_num_height_toaddress_idx ON transactions_output USING btree (hash, index, height, toaddress, txid, create_time)";
+    private static final String CREATE_HEADERS_TABLE_INDEX              = "CREATE INDEX headers_idex ON headers USING btree (hash, height)";
 
     private static final String SELECT_UNDOABLEBLOCKS_EXISTS_SQL        = "select 1 from undoableblocks where hash = ?";
 
@@ -138,6 +177,8 @@ public class PostgresFullPrunedBlockStore extends DatabaseFullPrunedBlockStore {
         sqlStatements.add(CREATE_HEADERS_TABLE);
         sqlStatements.add(CREATE_UNDOABLE_TABLE);
         sqlStatements.add(CREATE_OPEN_OUTPUT_TABLE);
+        sqlStatements.add(CREATE_TRANSACTIONS_INPIUT);
+        sqlStatements.add(CREATE_TRANSACTIONS_OUTPUT);
         return sqlStatements;
     }
 
@@ -149,6 +190,9 @@ public class PostgresFullPrunedBlockStore extends DatabaseFullPrunedBlockStore {
         sqlStatements.add(CREATE_OUTPUTS_ADDRESSTARGETABLE_INDEX);
         sqlStatements.add(CREATE_OUTPUTS_HASH_INDEX);
         sqlStatements.add(CREATE_OUTPUTS_TOADDRESS_INDEX);
+        sqlStatements.add(CREATE_TRANSACTIONS_INPUT_TABLE_INDEX);
+        sqlStatements.add(CREATE_TRANSACTIONS_OUPUT_TABLE_INDEX);
+        sqlStatements.add(CREATE_HEADERS_TABLE_INDEX);
         return sqlStatements;
     }
 

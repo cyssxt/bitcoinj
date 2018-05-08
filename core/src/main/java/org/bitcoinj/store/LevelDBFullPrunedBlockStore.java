@@ -813,6 +813,16 @@ public class LevelDBFullPrunedBlockStore implements FullPrunedBlockStore {
             endMethod("addUnspentTransactionOutput");
     }
 
+    @Override
+    public void addTransactionInput(UTXO out) throws BlockStoreException {
+
+    }
+
+    @Override
+    public void addTransactionOutput(UTXO out) throws BlockStoreException {
+
+    }
+
     private void batchPut(byte[] key, byte[] value) {
         if (autoCommit) {
             db.put(key, value);
@@ -911,6 +921,11 @@ public class LevelDBFullPrunedBlockStore implements FullPrunedBlockStore {
 
         if (instrument)
             endMethod("removeUnspentTransactionOutput");
+    }
+
+    @Override
+    public void removeTransactionInput(UTXO out) throws BlockStoreException {
+
     }
 
     // Instrumentation of bloom filter to check theory

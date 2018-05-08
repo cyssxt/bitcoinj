@@ -22,6 +22,7 @@ import com.google.common.collect.Lists;
 import org.bitcoinj.core.*;
 import org.bitcoinj.script.Script;
 import org.bitcoinj.script.Script.ScriptType;
+import org.postgresql.util.PSQLException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -90,6 +91,8 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
     private static final String DROP_HEADERS_TABLE                              = "DROP TABLE headers";
     private static final String DROP_UNDOABLE_TABLE                             = "DROP TABLE undoableblocks";
     private static final String DROP_OPEN_OUTPUT_TABLE                          = "DROP TABLE openoutputs";
+    private static final String DROP_TRANSACTIONS_INPUT_TABLE                   = "DROP TABLE transactions_input";
+    private static final String DROP_TRANSACTIONS_OUTPUT_TABLE                  = "DROP TABLE transactions_output";
 
     // Queries SQL.
     private static final String SELECT_SETTINGS_SQL                             = "SELECT value FROM settings WHERE name = ?";
@@ -105,10 +108,13 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
     private static final String UPDATE_UNDOABLEBLOCKS_SQL                       = "UPDATE undoableblocks SET txoutchanges=?, transactions=? WHERE hash = ?";
     private static final String DELETE_UNDOABLEBLOCKS_SQL                       = "DELETE FROM undoableblocks WHERE height <= ?";
 
-    private static final String SELECT_OPENOUTPUTS_SQL                          = "SELECT height, value, scriptbytes, coinbase, toaddress, addresstargetable FROM openoutputs WHERE hash = ? AND index = ?";
+    private static final String SELECT_OPENOUTPUTS_SQL                          = "SELECT height, value, scriptbytes, coinbase, toaddress, addresstargetable, txid, fee, timereceived FROM openoutputs WHERE hash = ? AND index = ?";
     private static final String SELECT_OPENOUTPUTS_COUNT_SQL                    = "SELECT COUNT(*) FROM openoutputs WHERE hash = ?";
-    private static final String INSERT_OPENOUTPUTS_SQL                          = "INSERT INTO openoutputs (hash, index, height, value, scriptbytes, toaddress, addresstargetable, coinbase) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+    private static final String INSERT_OPENOUTPUTS_SQL                          = "INSERT INTO openoutputs (hash, index, height, value, scriptbytes, toaddress, addresstargetable, coinbase, txid,fee,timereceived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    private static final String INSERT_TRANSACTION_INPUT_SQL                    = "INSERT INTO transactions_input (hash, index, height, value, scriptbytes, toaddress, addresstargetable, coinbase, txid,fee, timereceived, outputTxid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    private static final String INSERT_TRANSACTION_OUTPUT_SQL                   = "INSERT INTO transactions_output (hash, index, height, value, scriptbytes, toaddress, addresstargetable, coinbase, txid,fee, timereceived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     private static final String DELETE_OPENOUTPUTS_SQL                          = "DELETE FROM openoutputs WHERE hash = ? AND index = ?";
+    private static final String DELETE_TRANSACTIONINPUT_SQL                     = "DELETE FROM transactions_input WHERE hash = ? AND index = ?";
 
     // Dump table SQL (this is just for data sizing statistics).
     private static final String SELECT_DUMP_SETTINGS_SQL                        = "SELECT name, value FROM settings";
@@ -116,7 +122,7 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
     private static final String SELECT_DUMP_UNDOABLEBLOCKS_SQL                  = "SELECT txoutchanges, transactions FROM undoableblocks";
     private static final String SELECT_DUMP_OPENOUTPUTS_SQL                     = "SELECT value, scriptbytes FROM openoutputs";
 
-    private static final String SELECT_TRANSACTION_OUTPUTS_SQL                  = "SELECT hash, value, scriptbytes, height, index, coinbase, toaddress, addresstargetable FROM openoutputs where toaddress = ?";
+    private static final String SELECT_TRANSACTION_OUTPUTS_SQL                  = "SELECT hash, value, scriptbytes, height, index, coinbase, toaddress, addresstargetable, txid, fee, timereceived FROM openoutputs where toaddress = ?";
 
     // Select the balance of an address SQL.
     private static final String SELECT_BALANCE_SQL                              = "select sum(value) from openoutputs where toaddress = ?";
@@ -261,6 +267,8 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
         sqlStatements.add(DROP_HEADERS_TABLE);
         sqlStatements.add(DROP_UNDOABLE_TABLE);
         sqlStatements.add(DROP_OPEN_OUTPUT_TABLE);
+        sqlStatements.add(DROP_TRANSACTIONS_INPUT_TABLE);
+        sqlStatements.add(DROP_TRANSACTIONS_OUTPUT_TABLE);
         return sqlStatements;
     }
 
@@ -368,12 +376,20 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
         return INSERT_OPENOUTPUTS_SQL;
     }
 
+    protected String getInsertTransactionInputSql() { return INSERT_TRANSACTION_INPUT_SQL; }
+
+    protected String getInsertTransactionOutputSql() { return INSERT_TRANSACTION_OUTPUT_SQL; }
+
     /**
      * Get the SQL to delete a openoutputs record.
      * @return The SQL delete statement.
      */
     protected String getDeleteOpenoutputsSQL() {
         return DELETE_OPENOUTPUTS_SQL;
+    }
+
+    protected String getDeleteTransactionInputSQL() {
+        return DELETE_TRANSACTIONINPUT_SQL;
     }
 
     /**
@@ -917,13 +933,16 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
             byte[] scriptBytes = results.getBytes(3);
             boolean coinbase = results.getBoolean(4);
             String address = results.getString(5);
+            String txid = results.getString(7);
+            long fee = results.getLong(8);
+            long timereceived = results.getLong(9);
             UTXO txout = new UTXO(hash,
                     index,
                     value,
                     height,
                     coinbase,
                     new Script(scriptBytes),
-                    address);
+                    address,txid,Coin.valueOf(fee),timereceived);
             return txout;
         } catch (SQLException ex) {
             throw new BlockStoreException(ex);
@@ -938,12 +957,17 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
         }
     }
 
+
     @Override
-    public void addUnspentTransactionOutput(UTXO out) throws BlockStoreException {
-        maybeConnect();
+    public void addTransactionInput(UTXO out) {
         PreparedStatement s = null;
+        Savepoint savepoint = null;
+        Connection connection = null;
         try {
-            s = conn.get().prepareStatement(getInsertOpenoutputsSQL());
+            maybeConnect();
+            connection = conn.get();
+            savepoint = connection.setSavepoint();
+            s = connection.prepareStatement(getInsertTransactionInputSql());
             s.setBytes(1, out.getHash().getBytes());
             // index is actually an unsigned int
             s.setInt(2, (int) out.getIndex());
@@ -954,17 +978,118 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
             ScriptType scriptType = out.getScript().getScriptType();
             s.setInt(7, scriptType != null ? scriptType.id : 0);
             s.setBoolean(8, out.isCoinbase());
+            s.setString(9,out.getTxid());
+            s.setLong(10,out.getFee().getValue());
+            s.setLong(11,out.getTimereceived());
+            s.setString(12,out.getOutputTxid());
             s.executeUpdate();
             s.close();
-        } catch (SQLException e) {
-            if (!(e.getSQLState().equals(getDuplicateKeyErrorCode())))
-                throw new BlockStoreException(e);
+        } catch (Exception e) {
+//            log.error("e={}",e);
+            if(savepoint!=null && connection!=null){
+                try {
+                    connection.rollback(savepoint);
+                } catch (SQLException e1) {
+                    e1.printStackTrace();
+                }
+            }
         } finally {
             if (s != null) {
                 try {
                     s.close();
                 } catch (SQLException e) {
-                    throw new BlockStoreException(e);
+                    log.error("e={}",e);
+                }
+            }
+        }
+    }
+
+    @Override
+    public void addTransactionOutput(UTXO out){
+        PreparedStatement s = null;
+        Savepoint savepoint = null;
+        Connection connection = null;
+        try {
+            maybeConnect();
+            connection = conn.get();
+            savepoint = connection.setSavepoint();
+            s = connection.prepareStatement(getInsertTransactionOutputSql());
+            s.setBytes(1, out.getHash().getBytes());
+            // index is actually an unsigned int
+            s.setInt(2, (int) out.getIndex());
+            s.setInt(3, out.getHeight());
+            s.setLong(4, out.getValue().value);
+            s.setBytes(5, out.getScript().getProgram());
+            s.setString(6, out.getAddress());
+            ScriptType scriptType = out.getScript().getScriptType();
+            s.setInt(7, scriptType != null ? scriptType.id : 0);
+            s.setBoolean(8, out.isCoinbase());
+            s.setString(9,out.getTxid());
+            s.setLong(10,out.getFee().getValue());
+            s.setLong(11,out.getTimereceived());
+            s.executeUpdate();
+            s.close();
+        } catch (Exception e) {
+//            log.error("e={}",e);
+            if(savepoint!=null && connection!=null){
+                try {
+                    connection.rollback(savepoint);
+                } catch (SQLException e1) {
+                    e1.printStackTrace();
+                }
+            }
+        } finally {
+            if (s != null) {
+                try {
+                    s.close();
+                } catch (SQLException e) {
+                    log.error("e={}",e);
+                }
+            }
+        }
+    }
+
+
+    @Override
+    public void addUnspentTransactionOutput(UTXO out){
+        this.addTransactionOutput(out);
+        PreparedStatement s = null;
+        Savepoint savepoint = null;
+        Connection connection = null;
+        try {
+            maybeConnect();
+            connection = conn.get();
+            savepoint = connection.setSavepoint();
+            s = connection.prepareStatement(getInsertOpenoutputsSQL());
+            s.setBytes(1, out.getHash().getBytes());
+            // index is actually an unsigned int
+            s.setInt(2, (int) out.getIndex());
+            s.setInt(3, out.getHeight());
+            s.setLong(4, out.getValue().value);
+            s.setBytes(5, out.getScript().getProgram());
+            s.setString(6, out.getAddress());
+            ScriptType scriptType = out.getScript().getScriptType();
+            s.setInt(7, scriptType != null ? scriptType.id : 0);
+            s.setBoolean(8, out.isCoinbase());
+            s.setString(9,out.getTxid());
+            s.setLong(10,out.getFee().getValue());
+            s.setLong(11,out.getTimereceived());
+            s.executeUpdate();
+            s.close();
+        } catch (Exception e) {
+            if(connection!=null && savepoint!=null){
+                try {
+                    connection.rollback(savepoint);
+                } catch (SQLException e1) {
+                    e1.printStackTrace();
+                }
+            }
+        } finally {
+            if (s != null) {
+                try {
+                    s.close();
+                } catch (SQLException e) {
+//                    log.error("e={}",e);
                 }
             }
         }
@@ -989,6 +1114,24 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
         }
     }
 
+    @Override
+    public void removeTransactionInput(UTXO out) throws BlockStoreException {
+        maybeConnect();
+        // TODO: This should only need one query (maybe a stored procedure)
+        if (getTransactionOutput(out.getHash(), out.getIndex()) == null)
+            throw new BlockStoreException("Tried to remove a UTXO from DatabaseFullPrunedBlockStore that it didn't have!");
+        try {
+            PreparedStatement s = conn.get()
+                    .prepareStatement(getDeleteTransactionInputSQL());
+            s.setBytes(1, out.getHash().getBytes());
+            // index is actually an unsigned int
+            s.setInt(2, (int)out.getIndex());
+            s.executeUpdate();
+            s.close();
+        } catch (SQLException e) {
+            throw new BlockStoreException(e);
+        }
+    }
     @Override
     public void beginDatabaseBatchWrite() throws BlockStoreException {
         maybeConnect();
@@ -1161,13 +1304,16 @@ public abstract class DatabaseFullPrunedBlockStore implements FullPrunedBlockSto
                     int index = rs.getInt(5);
                     boolean coinbase = rs.getBoolean(6);
                     String toAddress = rs.getString(7);
+                    String txid = rs.getString(9);
+                    long fee = rs.getLong(10);
+                    long timereceived = rs.getLong(11);
                     UTXO output = new UTXO(hash,
                             index,
                             amount,
                             height,
                             coinbase,
                             new Script(scriptBytes),
-                            toAddress);
+                            toAddress,txid,Coin.valueOf(fee),timereceived);
                     outputs.add(output);
                 }
             }

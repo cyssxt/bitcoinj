@@ -362,10 +362,25 @@ public class MemoryFullPrunedBlockStore implements FullPrunedBlockStore {
     }
 
     @Override
+    public void addTransactionInput(UTXO out) throws BlockStoreException {
+
+    }
+
+    @Override
+    public void addTransactionOutput(UTXO out) throws BlockStoreException {
+
+    }
+
+    @Override
     public synchronized void removeUnspentTransactionOutput(UTXO out) throws BlockStoreException {
         Preconditions.checkNotNull(transactionOutputMap, "MemoryFullPrunedBlockStore is closed");
         if (transactionOutputMap.remove(new StoredTransactionOutPoint(out)) == null)
             throw new BlockStoreException("Tried to remove a UTXO from MemoryFullPrunedBlockStore that it didn't have!");
+    }
+
+    @Override
+    public void removeTransactionInput(UTXO out) throws BlockStoreException {
+
     }
 
     @Override

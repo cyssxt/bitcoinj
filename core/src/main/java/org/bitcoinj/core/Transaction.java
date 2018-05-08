@@ -654,6 +654,7 @@ public class Transaction extends ChildMessage {
     }
 
     public int getOptimalEncodingMessageSize() {
+        log.info("getOptimalEncodingMessageSize={}",optimalEncodingMessageSize);
         if (optimalEncodingMessageSize != 0)
             return optimalEncodingMessageSize;
         optimalEncodingMessageSize = getMessageSize();

@@ -219,7 +219,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
             throw new VerificationException("Block failed checkpoint lockin at " + height);
 
         blockStore.beginDatabaseBatchWrite();
-
+        long timereceived = block.getTimeSeconds();
         LinkedList<UTXO> txOutsSpent = new LinkedList<>();
         LinkedList<UTXO> txOutsCreated = new LinkedList<>();
         long sigOps = 0;
@@ -248,6 +248,7 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
             Coin coinbaseValue = null;
             for (final Transaction tx : block.transactions) {
                 boolean isCoinBase = tx.isCoinBase();
+                String txid = tx.getHash().toString();
                 Coin valueIn = Coin.ZERO;
                 Coin valueOut = Coin.ZERO;
                 final List<Script> prevOutScripts = new LinkedList<>();
@@ -259,6 +260,8 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                         TransactionInput in = tx.getInputs().get(index);
                         UTXO prevOut = blockStore.getTransactionOutput(in.getOutpoint().getHash(),
                                 in.getOutpoint().getIndex());
+                        prevOut.setOutputTxid(txid);
+                        blockStore.addTransactionInput(prevOut);
                         if (prevOut == null)
                             throw new VerificationException("Attempted to spend a non-existent or already spent output!");
                         // Coinbases can't be spent until they mature, to avoid re-orgs destroying entire transaction
@@ -286,16 +289,6 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                 Sha256Hash hash = tx.getHash();
                 for (TransactionOutput out : tx.getOutputs()) {
                     valueOut = valueOut.add(out.getValue());
-                    // For each output, add it to the set of unspent outputs so it can be consumed in future.
-                    Script script = getScript(out.getScriptBytes());
-                    UTXO newOut = new UTXO(hash,
-                            out.getIndex(),
-                            out.getValue(),
-                            height, isCoinBase,
-                            script,
-                            getScriptAddress(script));
-                    blockStore.addUnspentTransactionOutput(newOut);
-                    txOutsCreated.add(newOut);
                 }
                 // All values were already checked for being non-negative (as it is verified in Transaction.verify())
                 // but we check again here just for defence in depth. Transactions with zero output value are OK.
@@ -308,7 +301,18 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                         throw new VerificationException("Transaction input value out of range");
                     totalFees = totalFees.add(valueIn.subtract(valueOut));
                 }
-
+                for (TransactionOutput out : tx.getOutputs()) {
+                    // For each output, add it to the set of unspent outputs so it can be consumed in future.
+                    Script script = getScript(out.getScriptBytes());
+                    UTXO newOut = new UTXO(hash,
+                            out.getIndex(),
+                            out.getValue(),
+                            height, isCoinBase,
+                            script,
+                            getScriptAddress(script),tx.getHash().toString(),totalFees,timereceived);
+                    blockStore.addUnspentTransactionOutput(newOut);
+                    txOutsCreated.add(newOut);
+                }
                 if (!isCoinBase && runScripts) {
                     // Because correctlySpends modifies transactions, this must come after we are done with tx
                     FutureTask<VerificationException> future = new FutureTask<>(new Verifier(tx, prevOutScripts, verifyFlags));
@@ -383,8 +387,9 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                 List<Future<VerificationException>> listScriptVerificationResults = new ArrayList<>(transactions.size());
                 for (final Transaction tx : transactions) {
                     final Set<VerifyFlag> verifyFlags =
-                        params.getTransactionVerificationFlags(newBlock.getHeader(), tx, getVersionTally(), Integer.SIZE);
+                            params.getTransactionVerificationFlags(newBlock.getHeader(), tx, getVersionTally(), Integer.SIZE);
                     boolean isCoinBase = tx.isCoinBase();
+                    String txid = tx.getHash().toString();
                     Coin valueIn = Coin.ZERO;
                     Coin valueOut = Coin.ZERO;
                     final List<Script> prevOutScripts = new LinkedList<>();
@@ -394,6 +399,8 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                             final TransactionInput in = tx.getInputs().get(index);
                             final UTXO prevOut = blockStore.getTransactionOutput(in.getOutpoint().getHash(),
                                     in.getOutpoint().getIndex());
+                            prevOut.setOutputTxid(txid);
+                            blockStore.addTransactionInput(prevOut);
                             if (prevOut == null)
                                 throw new VerificationException("Attempted spend of a non-existent or already spent output!");
                             if (prevOut.isCoinbase() && newBlock.getHeight() - prevOut.getHeight() < params.getSpendableCoinbaseDepth())
@@ -417,16 +424,6 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                     Sha256Hash hash = tx.getHash();
                     for (TransactionOutput out : tx.getOutputs()) {
                         valueOut = valueOut.add(out.getValue());
-                        Script script = getScript(out.getScriptBytes());
-                        UTXO newOut = new UTXO(hash,
-                                out.getIndex(),
-                                out.getValue(),
-                                newBlock.getHeight(),
-                                isCoinBase,
-                                script,
-                                getScriptAddress(script));
-                        blockStore.addUnspentTransactionOutput(newOut);
-                        txOutsCreated.add(newOut);
                     }
                     // All values were already checked for being non-negative (as it is verified in Transaction.verify())
                     // but we check again here just for defence in depth. Transactions with zero output value are OK.
@@ -439,7 +436,19 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                             throw new VerificationException("Transaction input value out of range");
                         totalFees = totalFees.add(valueIn.subtract(valueOut));
                     }
-
+                    for (TransactionOutput out : tx.getOutputs()) {
+                        valueOut = valueOut.add(out.getValue());
+                        Script script = getScript(out.getScriptBytes());
+                        UTXO newOut = new UTXO(hash,
+                                out.getIndex(),
+                                out.getValue(),
+                                newBlock.getHeight(),
+                                isCoinBase,
+                                script,
+                                getScriptAddress(script),txid,totalFees,new java.util.Date().getTime());
+                        blockStore.addUnspentTransactionOutput(newOut);
+                        txOutsCreated.add(newOut);
+                    }
                     if (!isCoinBase) {
                         // Because correctlySpends modifies transactions, this must come after we are done with tx
                         FutureTask<VerificationException> future = new FutureTask<>(new Verifier(tx, prevOutScripts, verifyFlags));
@@ -474,8 +483,10 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
                     }
                 for (UTXO out : txOutChanges.txOutsCreated)
                     blockStore.addUnspentTransactionOutput(out);
-                for (UTXO out : txOutChanges.txOutsSpent)
+                for (UTXO out : txOutChanges.txOutsSpent){
+                    blockStore.removeTransactionInput(out);
                     blockStore.removeUnspentTransactionOutput(out);
+                }
             }
         } catch (VerificationException e) {
             scriptVerificationExecutor.shutdownNow();
@@ -501,10 +512,13 @@ public class FullPrunedBlockChain extends AbstractBlockChain {
             StoredUndoableBlock undoBlock = blockStore.getUndoBlock(oldBlock.getHeader().getHash());
             if (undoBlock == null) throw new PrunedException(oldBlock.getHeader().getHash());
             TransactionOutputChanges txOutChanges = undoBlock.getTxOutChanges();
-            for (UTXO out : txOutChanges.txOutsSpent)
+            for (UTXO out : txOutChanges.txOutsSpent) {
                 blockStore.addUnspentTransactionOutput(out);
-            for (UTXO out : txOutChanges.txOutsCreated)
+            }
+            for (UTXO out : txOutChanges.txOutsCreated){
+                blockStore.removeTransactionInput(out);
                 blockStore.removeUnspentTransactionOutput(out);
+            }
         } catch (PrunedException e) {
             blockStore.abortDatabaseBatchWrite();
             throw e;

@@ -10,8 +10,10 @@ buildscript {
 
 allprojects {
     repositories {
+        mavenLocal()
         jcenter()
     }
 
     group = 'org.bitcoinj'
 }
+
